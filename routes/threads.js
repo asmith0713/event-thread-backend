@@ -19,6 +19,10 @@ router.get('/', async (req, res) => {
         const messages = isMember
           ? await Message.find({ threadId: thread._id }).sort({ timestamp: 1 }).lean()
           : [];
+        const memberProfiles = (thread.members || []).map((m) => ({
+          userId: (m?._id ? m._id.toString() : m.toString()),
+          username: m && m.username ? m.username : undefined,
+        }));
         return {
           id: thread._id.toString(),
           title: thread.title,
@@ -30,6 +34,7 @@ router.get('/', async (req, res) => {
           requiresApproval: typeof thread.requiresApproval === 'boolean' ? thread.requiresApproval : true,
           expiresAt: thread.expiresAt.toISOString(),
           members: thread.members.map((m) => (m?._id ? m._id.toString() : m.toString())),
+          memberProfiles,
           pendingRequests: thread.pendingRequests.map((req) => ({
             userId: req._id.toString(),
             username: req.username,
@@ -98,6 +103,7 @@ router.post('/', async (req, res) => {
           requiresApproval: thread.requiresApproval,
           expiresAt: thread.expiresAt.toISOString(),
           members: [creatorId],
+          memberProfiles: [{ userId: creatorId, username: creator }],
           pendingRequests: [],
           createdAt: thread.createdAt.toISOString(),
         });
