@@ -27,6 +27,7 @@ router.get('/', async (req, res) => {
           creatorId: thread.creator.toString(),
           location: thread.location,
           tags: thread.tags,
+          requiresApproval: typeof thread.requiresApproval === 'boolean' ? thread.requiresApproval : true,
           expiresAt: thread.expiresAt.toISOString(),
           members: thread.members.map((m) => (m?._id ? m._id.toString() : m.toString())),
           pendingRequests: thread.pendingRequests.map((req) => ({
@@ -56,7 +57,7 @@ router.get('/', async (req, res) => {
 // POST /api/threads - Create new thread
 router.post('/', async (req, res) => {
   try {
-    const { title, description, creator, creatorId, location, tags, expiresAt } = req.body;
+    const { title, description, creator, creatorId, location, tags, expiresAt, requiresApproval } = req.body;
 
     const thread = new Thread({
       title,
@@ -67,6 +68,7 @@ router.post('/', async (req, res) => {
       tags: tags || [],
       members: [creatorId],
       pendingRequests: [],
+      requiresApproval: typeof requiresApproval === 'boolean' ? requiresApproval : true,
       expiresAt: new Date(expiresAt),
     });
 
@@ -93,6 +95,7 @@ router.post('/', async (req, res) => {
           creatorId: thread.creator.toString(),
           location: thread.location,
           tags: thread.tags,
+          requiresApproval: thread.requiresApproval,
           expiresAt: thread.expiresAt.toISOString(),
           members: [creatorId],
           pendingRequests: [],
@@ -111,6 +114,7 @@ router.post('/', async (req, res) => {
         creatorId: thread.creator.toString(),
         location: thread.location,
         tags: thread.tags,
+        requiresApproval: thread.requiresApproval,
         expiresAt: thread.expiresAt.toISOString(),
         members: [creatorId],
         pendingRequests: [],
@@ -178,14 +182,56 @@ router.post('/:id/join', async (req, res) => {
 
     const isMember = thread.members.some((m) => m.toString() === userId);
     const alreadyPending = thread.pendingRequests.some((p) => p.toString() === userId);
-    if (isMember || alreadyPending) {
-      return res.status(400).json({ success: false, message: 'Already a member or request pending' });
+    if (isMember) {
+      return res.status(400).json({ success: false, message: 'Already a member' });
     }
 
+    // If approvals are not required, add immediately
+    if (thread.requiresApproval === false) {
+      if (alreadyPending) {
+        thread.pendingRequests = thread.pendingRequests.filter((p) => p.toString() !== userId);
+      }
+      thread.members.push(userId);
+      const user = await User.findById(userId).select('username').lean();
+
+      const welcomeMessage = new Message({
+        threadId: id,
+        userId: userId,
+        username: 'System',
+        message: `${user?.username || 'User'} joined the thread!`,
+      });
+      await welcomeMessage.save();
+
+      await thread.save();
+
+      // Real-time notify thread room about new member and message
+      try {
+        const { getSocketIO } = await import('../socket.js');
+        const io = getSocketIO();
+        if (io) {
+          io.to(id.toString()).emit('newMessage', {
+            id: welcomeMessage._id.toString(),
+            threadId: id,
+            userId: welcomeMessage.userId.toString(),
+            username: welcomeMessage.username,
+            message: welcomeMessage.message,
+            timestamp: welcomeMessage.timestamp.toISOString(),
+          });
+          io.to(id.toString()).emit('membershipChanged', {
+            threadId: id,
+            userId,
+            username: user?.username || 'User',
+          });
+        }
+      } catch {}
+
+      return res.json({ success: true, message: 'Joined thread' });
+    }
+
+    // Otherwise, create a pending request and notify creator
     thread.pendingRequests.push(userId);
     await thread.save();
 
-    // Notify creator in real-time
     try {
       const { getSocketIO } = await import('../socket.js');
       const io = getSocketIO();

@@ -71,6 +71,11 @@ const threadSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }],
+  requiresApproval: {
+    type: Boolean,
+    default: true,
+    index: true
+  },
   expiresAt: {
     type: Date,
     required: true,
